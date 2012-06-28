@@ -1,0 +1,43 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin';
+
+use Vrane::EC2;
+use Getopt::Long;
+my ($instance_id, $state, $group);
+GetOptions(
+	"instance=s" => \$instance_id,
+	"state=s"    => \$state,
+	"group=s"    => \$group) or die "Cannot parse options\n";
+my $name;
+if($instance_id =~ /(i-\w+)/){
+	print "using instance id $1\n";
+	$instance_id = $1
+} elsif($instance_id) {
+	print "searching for instance with name $instance_id\n";
+	$name = $instance_id;
+	$instance_id = undef;
+} else {
+	print "Describing all instances\n";
+	$instance_id = undef;
+} 
+
+my $ec2 = Vrane::EC2->new;
+my (@instances) = $instance_id ? $ec2->describe_instances($instance_id) : $ec2->get_all_instances;
+for my $i (@instances){
+	if($state){ next unless $state eq $i->instanceState }
+	if($name){ next unless $name eq $i->tag_set->{Name} }
+	print "$i\n--------------------\n";
+	$ec2->dump_data($i);
+	my @v=$i->blockDeviceMapping;
+	for (@v){
+		print "\t$_\t",$_->volume,"\n";
+	}
+	print "\tName\t",$i->tag_set->{Name},"\n";
+	print "------------------\n";
+}
+printf "total number of instances %d\n",scalar @instances;
+

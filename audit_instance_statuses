@@ -1,0 +1,56 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+
+use Vrane::EC2;
+use AWS::EC2;
+use AWS::EC2::ReservedInstance;
+
+use Getopt::Long;
+my ($v, $r);
+GetOptions (
+	'verbose' => \$v,
+	'rate'    => \$r,
+) or die "Cannot parse command line parameters $!\n";
+
+
+my @all_instances = Vrane::EC2->new->get_all_instances;
+my @running = grep { $_->instanceState eq 'running'} @all_instances;
+my %running = map { $_ => $_ } @running;
+my $rate;
+my $ec2 = AWS::EC2->new;
+for my $i (@running){
+	my $obj;
+	if($obj = $ec2->is_running_reserved($i)){
+		$rate += $ec2->get_reserved_hourly_charge($i)
+	}
+	if($obj){
+		my $digest = substr ($obj->id,9,10);
+		printf "This %s instance in %s is running as reserved instance with id digest %s\n", $i->instanceType, $i->placement, $digest if $v;
+		delete $running{ $i };
+	}
+}
+print "The following instances are not running as reserved instances\n" if keys %running;
+while(my ($x,$y) = each %running){
+	print $y->instanceLifecycle if $y->instanceLifecycle;
+	printf "$x name %s type %s in %s\n",$y->name, $y->instanceType, $y->placement
+}
+if(4 < keys %running){
+	print $ec2->get_xml;
+exit;
+}
+if($r){
+	print "Total hourly rate is $rate\n";
+	$rate *= 24 * 30.5;
+	$rate = sprintf '%.2f',$rate;
+	printf "Monthly rate is \$%.2f\n",$rate
+}
+if(my %r = $ec2->get_instances_running_as_unreserved){
+	my @heavies = grep { $_->type ne 'Light Utilization' } map { AWS::EC2::ReservedInstance->new($_) } values %r;
+	print "The following reserved instances are not used\n" if @heavies;
+	for (@heavies){
+		printf "%s in %s offering type %s\n", $_->{instanceType}, $_->{availabilityZone},$_->type
+	}
+}

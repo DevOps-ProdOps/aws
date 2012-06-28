@@ -1,0 +1,92 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin:/bin';
+
+use Vrane::EC2;
+use VM::EC2::Instance::Metadata;
+use Getopt::Long;
+my ($instance_id, $free, $state, $quiet);
+GetOptions(
+	"instance=s" => \$instance_id,
+	"free"       => \$free,
+	"state=s"    => \$state,
+	"quiet"    => \$quiet ) or die "Cannot parse options\n";
+
+my $instance_id = shift;
+if($instance_id =~ /(\w-\w+)/){
+	$quiet || print "using instance id $1\n";
+	$instance_id = $1
+} else {
+	$quiet || print "Describing all instances\n";
+	$instance_id = undef;
+} 
+
+my $ec2 = Vrane::EC2->new;
+my $me = VM::EC2::Instance::Metadata->new->instanceId;
+my (@instances) = $instance_id ? $ec2->describe_instances($instance_id) : $ec2->get_all_instances;
+my ($volume_count, $size, $avail, %V);
+my ($vc, $total, $ic);
+for my $i (@instances){
+	my $this_state = $i->instanceState;
+	if($state){ next unless $state eq $this_state}
+	$ic++;
+	my $name = $i->tag_set->{Name};
+	$quiet || print "$i $name $this_state\n";
+	my @d=$i->blockDeviceMapping;
+	my $isize;
+	for (@d){
+		my $v = $_->volume;	
+		$V{$v} = $v->size;
+		$size += $v->size;
+		$isize+= $v->size;
+		$volume_count++;
+		$quiet || print "\t$_\t$v\t",$v->status,"\tsize\t",$v->size,"GiB\n"
+	}
+	$quiet || print "\t\ttotal size $isize GiB\n";
+	my $ip = $i->ipAddress;
+	if($i eq $me){
+		parse_df_output('/usr/local/nagios-plugins/check_disk_usage');
+	} else {
+		next if $i->instanceState ne 'running';
+		parse_df_output("/usr/local/nagios/libexec/check_nrpe -H $ip -c disk_usage");
+	}
+}
+$total/=1024;
+$total = int $total;
+$avail/=1024;
+if($volume_count != $vc || abs($size-$total)/$total > 0.05*$total){
+	print "size and/or count do not match\n";
+	output_total();
+}else{
+	$quiet || output_total();
+}
+$quiet || print "number of instances $ic\n";
+printf "free space in running instances %0.1f GiB\n",$avail if $free && !$quiet;
+my @v = $ec2->get_all_volumes;
+my %done;
+for (@v){
+	next if ($V{$_} && $V{$_} == $_->size) || $done{$_};
+	$done{$_} = 1;
+	print "This volume $_ is not attached to any running instance\n" if !$state || $state ne 'running';
+}
+
+sub parse_df_output{
+	my $command = shift;
+	my $x=`$command`;
+	my @a=split/\s/,$x;
+	#i-4106652d      7430708 1       1032120
+	$avail+= $a[1];
+	$vc += $a[2];
+	$total += $a[3];
+	$a[1]/=1024;
+	$a[3]/=1024;
+	$quiet || printf "\tdf output for %s: free %0.1f GiB count %d total %0.1f GiB\n", @a;
+}
+
+sub output_total {
+	printf "total number of volumes %d size %d Gib monthly cost \$%.2f\n",$volume_count, $size, $size*0.1;
+	printf "using df number of volumes %d size %d Gib\n",$vc, $total
+}
