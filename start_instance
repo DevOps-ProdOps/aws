@@ -1,0 +1,50 @@
+#!/usr/bin/perl
+my $start=time;
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin';
+
+use Vrane::EC2;
+use Getopt::Long;
+
+my ($instance_id, $hostname);
+
+GetOptions ( "instance=s" => \$instance_id, "hostname=s" => \$hostname);
+
+my $name;
+if($instance_id =~ /(i-\w+)/){
+	$instance_id = $1;
+	print "Using instnace id '$instance_id'\n"
+} elsif($instance_id){
+	print "Using instance name '$instance_id'\n";
+	$name = $instance_id;
+}
+my $start = time;
+my $ec2 = Vrane::EC2->new;
+
+my $instance;
+if($name){
+	print "Searching instance with name $name\n";
+	my (@i) = $ec2->get_all_instances;
+	($instance) = grep { $_->tag_set->{Name} eq $name } @i;
+} else {
+	($instance) = $ec2->describe_instances($instance_id);
+}
+unless($instance){
+		print "No such instance found\n";
+		exit 1
+}
+my $ip;
+my $started = 0;
+if( 'stopped' eq $instance->instanceState ){
+	print "Instance is stopped.  Starting ...\n";
+	$instance->start(1);
+}
+if($ip = $instance->ipAddress){
+	print "Public ip is $ip\n";
+	print "Public dns name is ",$instance->dnsName,"\n"
+}
+$start = time - $start;
+printf "took %d seconds.  Now %s\n",$start,scalar localtime;
+
