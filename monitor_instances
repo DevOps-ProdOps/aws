@@ -1,0 +1,41 @@
+#!/usr/bin/perl
+
+use strict;
+
+use Vrane::EC2;
+use AWS::CloudWatch;
+use POSIX 'strftime';
+
+use Getopt::Long;
+my ($instance_id, $state, $type, $group);
+GetOptions(
+	"instance=s" => \$instance_id,
+  "state=s"    => \$state,
+	"type=s"     => \$type,
+  "group=s"    => \$group) or die "Cannot parse options\n";
+
+my $instance_id = shift;
+if($instance_id =~ /(\w-\w+)/){
+	print "using instance id $1\n";
+	$instance_id = $1
+} else {
+	print "Describing all instances\n";
+	$instance_id = undef;
+} 
+
+my $ec2 = Vrane::EC2->new;
+my (@instances) = $instance_id ? $ec2->describe_instances($instance_id) : $ec2->get_all_instances;
+my %ec2;
+my $now = time;
+for my $i (@instances){
+	if($state){ next unless $state eq $i->instanceState }
+	if($type){next unless $type eq $i->instanceType}
+	print $i->tag_set->{Name},"\t",$i->{region};
+	$ec2{ $i->{region} } ||= AWS::CloudWatch->new( region => $i->{region} );
+	my %A = (	
+		StartTime => strftime ('%Y-%m-%dT%H:%M:%S', gmtime($now - 2900)),
+		instances => $i->instanceId );
+	print "\tcpu\t",join "\t", $ec2{ $i->{region} }->get_formatted_mean_CPUUtilization( %A ),"\n"
+}
+printf "total number of instances %d\n",scalar @instances;
+

@@ -1,0 +1,59 @@
+#!/usr/bin/perl -T
+$| = 1;
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/bin:/sbin';
+
+use Vrane::EC2;
+
+my $mount_point = shift;
+if($mount_point =~ m|(/\w+)|){
+	print "Mount point $1\n";
+	$mount_point = $1
+}
+my $size = shift;
+if($size =~ /(\d+)/){
+	print "Creating a volume of size $1 GiB\n";
+	$size = $1;
+}
+unless($mount_point && $size){
+	print "Usage : $0 <mount point> <size>\n";
+	exit
+}
+
+my $ec2 = Vrane::EC2->new;
+my ($this_instance) = $ec2->get_this_instance;
+use Data::Dumper;
+my @a=$this_instance->blockDeviceMapping;
+
+my $device = Vrane::EC2->next_available_device($this_instance);
+if($device =~ m|(/dev/sd[f-z])|){ $device = $1 } else { die "bad device $device\n" }
+print "The device to use is $device\nCreating ebs volume\n";
+my $vol = $ec2->create_volume(
+	-availability_zone=> $this_instance->placement,
+	-size             => $size);
+print "Waiting for the device to be ready\n";
+while ($vol->current_status eq 'creating') {
+	print '..';
+	sleep 2;
+}
+print "\nVolume created.  Attaching it to $device\n";
+my $attaching = $ec2->attach_volume(
+	-volume_id=>$vol,
+	-instance_id=>$this_instance,
+	-device => $device);
+print "Waiting for the attached status\n";
+while ($attaching->current_status ne 'attached') {
+	print '..';
+	sleep 2;
+}
+print "\nvolume is ready to go\nFormatting device\n.........................\n";
+system('mke2fs','-j',$device) == 0 or die "Cannot format $device\n";
+print "--------------------------------\nMounting device\n";
+unless(-d $mount_point){
+	print "Mount point does not exist.  Creating it\n";
+	mkdir $mount_point or die "Cannot create mount point\n";
+}
+system('mount',$device,$mount_point) == 0 or die "Cannot mount $device\n";
+print "Finished\n";

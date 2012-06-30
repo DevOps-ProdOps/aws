@@ -1,0 +1,72 @@
+#!/usr/bin/perl -T
+
+use strict;
+$| = 1;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin:/bin';
+
+use Vrane::EC2;
+
+my $mount_point = shift;
+if($mount_point =~ m|(/\w+)|){
+	print "Unmounting $1\n";
+	$mount_point = $1
+}
+unless($mount_point){
+	print "Usage : $0 <mount point>\n";
+	exit
+}
+
+my $device = get_device ($mount_point);
+unless($device){
+	print "Cannot determine device to destroy\n";
+	exit 1
+}
+
+my $ec2 = Vrane::EC2->new;
+my ($this_instance) = $ec2->get_this_instance;
+
+
+my @attached_devices=$this_instance->blockDeviceMapping;
+my $my_device;
+unless(($my_device)=grep { $_ eq $device }  @attached_devices){
+	print "Device validation failed\n";
+	exit 1
+}
+my $volume_id = $my_device->volume_id;
+print "\nReady to umount $mount_point and destroy volume = $volume_id, device =$device\n";
+system('umount',$mount_point) == 0 or die "Cannot umount $mount_point\n";
+if(get_device($mount_point)){
+	print "device is still mounted\n";
+	exit 1;
+}
+print "$mount_point unmounted. Now formating it to wipe out data\n..............................................\n";
+system('mke2fs',$device) == 0 or die "Cannot format $device\n";
+my $detaching = $ec2->detach_volume($volume_id) or die "Cannot detach volume\n";
+print "---------------------------------\n$volume_id detached.  Now waiting for the status to be 'detached'\n";
+while ($detaching->current_status ne 'detached') {
+	print '.';
+	sleep 2;
+}
+print "\nvolume $volume_id is ready to be deteletd\n";
+
+$ec2->delete_volume($volume_id) or die "Cannot delete volume\n";
+print "volume deleted\n";
+$this_instance = $ec2->describe_instances($this_instance);
+@attached_devices = $this_instance->blockDeviceMapping;
+print "Current list of devices\n",join "\n",@attached_devices,"\n";
+
+sub get_device {
+	my $mnt = shift;
+	open J,'<','/etc/mtab' or die $!;
+	my $device;
+	while(<J>){
+		if(m|^/dev/xvd([f-z]) $mnt |){
+			$device = '/dev/sd'.$1;
+			last
+		}
+	}
+	close J or die $!;
+	return $device;
+}

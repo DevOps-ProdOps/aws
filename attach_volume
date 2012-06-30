@@ -1,0 +1,50 @@
+#!/usr/bin/perl -T
+$| = 1;
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/bin:/sbin';
+
+use Vrane::EC2;
+use Getopt::Long;
+use File::Basename 'basename';
+
+my ($mount, $vid, $device);
+
+GetOptions ( "mnt=s" => \$mount, "device=s" => \$device, "vid=s" => \$vid);
+
+sub usage {
+	my $file = basename $0;
+	print "Usage: $file --mnt <mount point> --vid <volume id> --device <device such as /dev/sdf>\n";
+	exit
+}
+
+if($device =~ m|(/[\w/]+)|){
+	print "device $1\n";
+	$device = $1
+} 
+
+if($mount =~ m|(/[\w/]+)|){
+	print "Mount point $1\n";
+	$mount = $1
+} 
+
+if($vid =~ /(vol-\w+)/){
+	print "Attaching volume $1\n";
+	$vid = $1;
+}
+
+usage unless $mount && $vid && $device;
+
+my $ec2 = Vrane::EC2->new;
+my ($this_instance) = $ec2->get_this_instance;
+my $attaching = $ec2->attach_volume(
+	-volume_id=>$vid,
+	-instance_id=>$this_instance,
+	-device => $device);
+print "Waiting for the attached status\n";
+while ($attaching->current_status ne 'attached') {
+	print '..';
+	sleep 2;
+}
+print "Finished\n";

@@ -1,0 +1,102 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin';
+
+use Vrane::EC2;
+use Getopt::Long;
+my ($id, $port, $protocol, $ips, $region);
+$ips=[];
+GetOptions (
+	"id=s"       => \$id,
+	"protocol=s" => \$protocol,
+	"port=i@"     => \$port,
+	"region=s"   => \$region,
+	"ip=s"       => $ips) or die "Cannot parse options\n";
+
+my $g;
+if($id =~ /^(\w-\w+)/){
+	print "using instance id $1\n";
+	$id = $1
+} elsif($id =~ /(sg-\w+)/){
+	print "security group id $1\n";
+	$g = $1
+}else { usage() }
+
+my %param;
+if($region){
+	print "Using region $region\n";
+	%param = ( region => $region )
+}
+my $ec2 = Vrane::EC2->new( %param );
+unless($g){
+	my ($instance)  = $ec2->describe_instances($id);
+	($g)  = $instance->group;
+}
+
+my ($sg) = $ec2->describe_security_groups($g);
+print "security group is $sg\n";
+unless($port && @$ips){
+	current_status($sg);
+	usage();
+}
+my @ports;
+for (@$port){
+	die unless /(\d+)/;
+	push @ports, $1
+}
+@ports or usage(1);
+printf "using port %s\n", join ' ',@ports;
+
+my (@ips,@sg);
+for (@$ips){
+	if(m|^([\d\./]+)|){
+		print "using ip address $_\n";
+		my $ip = $1;
+		$ip =~ m|/\d{1,3}$| or $ip .='/32'; 
+		push @ips, $ip
+	}else{
+		print "using security group $_\n";
+		push @sg, $_
+	}
+}
+unless(@ips || @sg){ usage(1) }
+if($protocol && $protocol ne 'tcp' && $protocol ne 'udp' && $protocol ne 'icmp'){
+	print "invalid protocal $protocol\n";
+	exit 1
+}
+$protocol ||='tcp';
+
+current_status($sg);
+if(@ips){
+	print "Opening port to ",join ' ',@ips,"\n";
+	doit ( -source_ip => \@ips );
+} 
+if(@sg){
+	print "Opening port to ",join ' ',@sg,"\n";
+	doit( -group => \@sg)
+}
+$sg->update or die "Cannot update security group\n";
+
+sub doit {
+	my %args = @_;
+	$args{'-protocol'} = $protocol;
+	for (@ports){
+		$sg->authorize_incoming( %args, -port => $_)
+	}
+}
+
+sub usage {
+	print "\nUsage: $0 --id <instance id> -p <port number> --ip <ip addresses>\n";
+	print "\t instance id can be security group id
+	ip address can be security group id\n";
+	exit shift;
+}
+
+sub current_status {
+	my $s = shift;
+	print "Current ip permissions\n";
+	print join ("\n",$s->ipPermissions),"\n";
+}

@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+use strict;
+
+use Vrane::EC2;
+use Getopt::Long;
+
+my ($v, $keep);
+
+GetOptions ( "volume=s" => \$v, "keep=i", \$keep );
+
+$keep ||= 7;
+
+die "Need volume" unless $v =~ /^(vol-\w+)$/;
+$v = $1;
+
+my $ec2 = Vrane::EC2->new; 
+
+my @snapshots = $ec2->describe_snapshots(  -filter => { 'tag:CreatedBy' => 'Backup job' } );
+
+my $i;
+for my $s (sort { $b->startTime cmp $a->startTime} @snapshots){
+	$i++;
+	if($i>$keep){
+		printf "deleting this old copy %s started at %s\n",$s->snapshotId, $s->startTime;
+		$ec2->delete_snapshot($s)
+	}
+}
+my ($volume) = $ec2->describe_volumes($v);
+my $name = $volume->tag_set->{Name};
+my $snap = $volume->create_snapshot($name);
+$snap->add_tag( CreatedBy => 'Backup job' );

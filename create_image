@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+
+use Vrane::EC2;
+use strict;
+use Getopt::Long;
+
+my ($i, $n);
+
+GetOptions(
+	"instance=s"  => \$i,
+	"name=s"      => \$n );
+unless($i && $n){
+	print "Usage: $0 <image id> <name>\n";
+	exit
+}
+my $ec2 = Vrane::EC2->new();
+
+my $image = $ec2->create_image(
+	-instance_id => $i,
+	-name        => $n,
+	-description => $n,
+	-no_reboot   => 1);
+
+

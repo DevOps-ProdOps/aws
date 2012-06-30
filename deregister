@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin';
+
+use Vrane::EC2;
+use Getopt::Long;
+my ($ami, $state, $group);
+GetOptions(
+	"ami=s"      => \$ami,
+	"state=s"    => \$state,
+	"group=s"    => \$group) or die "Cannot parse options\n";
+my $name;
+if($ami =~ /(ami-\w+)/){
+	print "using ami id $1\n";
+	$ami = $1
+} 
+
+my $ec2 = Vrane::EC2->new;
+$ec2->deregister_image($ami) or warn "Cannot deregister $ami\n";

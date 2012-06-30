@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+use strict;
+
+delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+$ENV{PATH}='/sbin';
+
+use AWS::EC2;
+use Getopt::Long;
+my ($id, $port, $protocol, $ips, $region);
+$ips=[];
+GetOptions (
+	"sgid=s"     => \$id,
+	"protocol=s" => \$protocol,
+	"port=i@"    => \$port,
+	"region=s"   => \$region,
+	"ip=s"       => $ips) or die "Cannot parse options\n";
+
+my $g;
+if($id =~ /^(sg-\w+)/){
+	$id = $1
+} else { usage() }
+print "using security group $id\n";
+
+
+my %param;
+if($region){
+	print "Using region $region\n";
+	%param = ( region => $region )
+}
+unless($port && @$ips){
+	print "Need port and ip\n";
+	usage();
+}
+my @ports;
+for (@$port){
+	die unless /(\d+)/;
+	push @ports, $1
+}
+@ports or usage(1);
+printf "using port %s\n", join ' ',@ports;
+
+my (@ips,@sg);
+for (@$ips){
+	if(m|^([\d\./]+)|){
+		print "using ip address $_\n";
+		my $ip = $1;
+		$ip =~ m|/\d{1,3}$| or $ip .='/32'; 
+		push @ips, $ip
+	}
+}
+unless(@ips){ usage(1) }
+if($protocol && $protocol ne 'tcp' && $protocol ne 'udp' && $protocol ne 'icmp'){
+	print "invalid protocal $protocol\n";
+	exit 1
+}
+$protocol ||='tcp';
+
+my $ec2 = AWS::EC2->new;
+if(@ips){
+	print "closing port to ",join ' ',@ips,"\n";
+	doit()
+} 
+
+sub doit {
+	my %args = (GroupId => $id, IpProtocol => $protocol);
+	for my $ip (@ips){
+		my %params = (%args, CidrIp => $ip);
+		for my $p (@ports){
+			$ec2->revoke_incoming( %params, FromPort => $p, ToPort => $p) or warn "Cannot revoke: port $p ip $ip\n"
+		}
+	}
+}
+
+sub usage {
+	print "\nUsage: $0 --sgid <instance id> -p <port number> --ip <ip addresses>\n";
+	exit shift;
+}
+
