@@ -27,8 +27,10 @@ my $ec2 = Vrane::EC2->new;
 my (@instances) = $instance_id ? $ec2->describe_instances($instance_id) : $ec2->get_all_instances;
 my %ec2;
 my $now = time;
+my $state_count = 0;
 for my $i (@instances){
 	if($state){ next unless $state eq $i->instanceState }
+	$state_count++;
 	if($type){next unless $type eq $i->instanceType}
 	print $i->tag_set->{Name},"\t",$i->{region};
 	$ec2{ $i->{region} } ||= AWS::CloudWatch->new( region => $i->{region} );
@@ -39,3 +41,6 @@ for my $i (@instances){
 }
 printf "total number of instances %d\n",scalar @instances;
 
+if($state){
+	printf "total number of %s instances %d\n", $state, $state_count
+}
