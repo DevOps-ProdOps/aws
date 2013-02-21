@@ -35,7 +35,7 @@ for my $i (@running){
 print "The following instances are not running as reserved instances\n" if keys %running;
 while(my ($x,$y) = each %running){
 	print $y->instanceLifecycle if $y->instanceLifecycle;
-	printf "$x name %s type %s in %s\n",$y->name, $y->instanceType, $y->placement
+	printf "$x name %s type %s in %s\n",$y->tag_set->{Name}, $y->instanceType, $y->placement
 }
 if(4 < keys %running){
 	print $ec2->get_xml;
